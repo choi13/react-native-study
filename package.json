@@ -1,7 +1,7 @@
 {
   "name": "mini-arcade",
   "version": "1.0.0",
-  "main": "index.ts",
+  "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
@@ -19,7 +19,8 @@
     "react-dom": "19.1.0",
     "react-native": "0.81.4",
     "react-native-gesture-handler": "~2.28.0",
-    "react-native-reanimated": "~4.1.0"
+    "react-native-reanimated": "~4.1.0",
+    "react-native-worklets": "^0.5.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
