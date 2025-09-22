@@ -5,8 +5,9 @@ import MemoryMatchPro from './MemoryMatchPro';
 import Game2048Pro from './Game2048Pro';
 import Snake from './Snake';
 import WhackAMole from './WhackAMole';
-
 import GoStopPro from './GoStopPro';
+import TexasHoldem from './TexasHoldem';
+
 
 export type GameId =
   | 'reaction-time'
@@ -15,7 +16,8 @@ export type GameId =
   | '2048-pro'
   | 'snake'
   | 'whack-a-mole'
-  | 'gostop-lite';            // 추가;
+  | 'gostop-lite'
+    | 'poker-holdem';   // 추가
 
 export type GameMeta = {
   id: GameId;
@@ -33,6 +35,7 @@ export const GAMES: GameMeta[] = [
   { id:'snake',         title:'Snake',         description:'먹이 먹고 성장',       component:Snake, scoringHint:'높을수록 좋음' },
   { id:'whack-a-mole',  title:'Whack-A-Mole',  description:'두더지 잡기',          component:WhackAMole, scoringHint:'높을수록 좋음' },
   { id:'gostop-lite', title:'고스톱 ', description:'맞고 간이 룰로 최고 점수 도전', component:GoStopPro, scoringHint:'최종 점수차(플레이어-CPU)' },
+{ id:'poker-holdem', title:'Texas Hold’em', description:'2인용 헤즈업 텍사스 홀덤', component:TexasHoldem, scoringHint:'칩 보유액(0이면 종료)' },
 ];
 
 export const findGame = (id: string) => GAMES.find(g => g.id === id);
