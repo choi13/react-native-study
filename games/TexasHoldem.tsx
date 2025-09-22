@@ -175,9 +175,39 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
   const [pot, setPot] = useState(0);
 
   // betting-state (per street)
-  const [toCall, setToCall] = useState(0);      // 현재 액터가 콜해야 할 금액
+//   const [toCall, setToCall] = useState(0);      // 현재 액터가 콜해야 할 금액
   const [betOpen, setBetOpen] = useState(false); // 해당 스트리트에서 누군가 베팅했는지(한 번만 허용)
-  const [revealed, setRevealed] = useState(false); // 쇼다운 시 CPU 홀카드 공개
+//   const [revealed, setRevealed] = useState(false); // 쇼다운 시 CPU 홀카드 공개
+
+
+// betting-state (per street)
+const [toCall, setToCall] = useState(0);     // 현재 턴 액터가 콜해야 할 금액 (파생값이지만 편의상 유지)
+const [streetBet, setStreetBet] = useState(0); // 해당 스트리트의 현재 최고 베팅액
+const [raises, setRaises] = useState(0);       // 해당 스트리트에서 발생한 베팅/레이즈 횟수
+const [opened, setOpened] = useState(false);   // 이 스트리트에 베팅이 열렸는가
+const [lastAggressor, setLastAggressor] = useState<Actor|null>(null); // 마지막 베팅/레이즈 주체
+const [contrib, setContrib] = useState<{player:number; cpu:number}>({player:0, cpu:0}); // 스트리트별 기여금
+
+// 기존 변수 유지
+const [revealed, setRevealed] = useState(false);
+// const actedThisStreet = useRef<{player:boolean;cpu:boolean}>({player:false,cpu:false});
+const actedSinceLastBet = useRef<{player:boolean;cpu:boolean}>({player:false,cpu:false});
+function other(a: Actor): Actor { return a==='player' ? 'cpu' : 'player'; }
+function needToCall(actor: Actor, _streetBet: number, _contrib: {player:number;cpu:number}) {
+  return Math.max(0, _streetBet - _contrib[actor]);
+}
+function resetStreetState(firstToAct: Actor) {
+  setStreetBet(0);
+  setRaises(0);
+  setOpened(false);
+  setLastAggressor(null);
+  setContrib({player:0, cpu:0});
+  actedThisStreet.current = {player:false, cpu:false};
+  actedSinceLastBet.current = {player:false, cpu:false};
+  setTurn(firstToAct);
+  setToCall(0);
+}
+
 
   // refs
   const actedThisStreet = useRef<{player:boolean;cpu:boolean}>({player:false,cpu:false});
@@ -187,7 +217,8 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
 
   // ----- Hand lifecycle -----
   const startNewHand = (nextDealerIsPlayer = !dealerIsPlayer, carryStacks?: {p:number;c:number}) => {
-    // game over?
+
+
     const pS = carryStacks ? carryStacks.p : playerStack;
     const cS = carryStacks ? carryStacks.c : cpuStack;
     if (pS<=0 || cS<=0) {
@@ -199,6 +230,32 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
     const ch = [d.pop()!, d.pop()!];
     const sbActor: Actor = nextDealerIsPlayer ? 'player':'cpu';
     const bbActor: Actor = nextDealerIsPlayer ? 'cpu':'player';
+
+// 프리플랍 스트리트 상태 세팅 (SB/BB 반영)
+const preContrib: {player:number; cpu:number} = {player:0, cpu:0};
+let preStreetBet = BB;
+let preOpened = true;
+let preRaises = 1; // 베팅이 열렸다고 간주(SB/BB 존재)
+let preLastAggressor: Actor = bbActor; // BB가 마지막 공격자 취급
+
+if (sbActor==='player') preContrib.player += SB; else preContrib.cpu += SB;
+if (bbActor==='player') preContrib.player += BB; else preContrib.cpu += BB;
+
+setContrib(preContrib);
+setStreetBet(preStreetBet);
+setOpened(preOpened);
+setRaises(preRaises);
+setLastAggressor(preLastAggressor);
+actedThisStreet.current = {player:false, cpu:false};
+actedSinceLastBet.current = {player:false, cpu:false};
+
+// 프리플랍 첫 액션: SB(딜러)
+const firstActor: Actor = sbActor;
+setTurn(firstActor);
+setToCall( needToCall(firstActor, preStreetBet, preContrib) );
+
+
+    // game over?
 
     let pot0 = 0, pStack=pS, cStack=cS;
     if (sbActor==='player') { pStack -= SB; pot0 += SB; } else { cStack -= SB; pot0 += SB; }
@@ -226,31 +283,29 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
   useEffect(()=>{ startNewHand(dealerIsPlayer); /* first mount */ },[]); // eslint-disable-line
 
   // ----- Street advance -----
-  const dealNextStreet = () => {
-    if (!handActive.current) return;
-    const d = [...deck];
-    if (street==='preflop') {
-      // burn 1, flop 3
-      d.pop(); const flop = [d.pop()!, d.pop()!, d.pop()!];
-      setBoard(flop); setStreet('flop'); resetStreetFlags();
-      // Postflop: 헤즈업에서 딜러가 마지막 액션. 즉, 포스트플랍은 딜러가 '뒤'라서 첫 액션은 비딜러.
-      setTurn(dealerIsPlayer ? 'cpu' : 'player');
-      setToCall(0);
-      setDeck(d);
-    } else if (street==='flop') {
-      d.pop(); const turnC = d.pop()!; setBoard(prev=>[...prev, turnC]);
-      setStreet('turn'); resetStreetFlags();
-      setTurn(dealerIsPlayer ? 'cpu' : 'player');
-      setToCall(0); setDeck(d);
-    } else if (street==='turn') {
-      d.pop(); const river = d.pop()!; setBoard(prev=>[...prev, river]);
-      setStreet('river'); resetStreetFlags();
-      setTurn(dealerIsPlayer ? 'cpu' : 'player');
-      setToCall(0); setDeck(d);
-    } else if (street==='river') {
-      goShowdown();
-    }
-  };
+const dealNextStreet = () => {
+  if (!handActive.current) return;
+  const d = [...deck];
+
+  const firstToActPost = dealerIsPlayer ? 'cpu' : 'player'; // 포스트플랍은 비딜러 먼저
+
+  if (street==='preflop') {
+    d.pop(); const flop = [d.pop()!, d.pop()!, d.pop()!];
+    setBoard(flop); setStreet('flop'); setDeck(d);
+    resetStreetState(firstToActPost);
+  } else if (street==='flop') {
+    d.pop(); const turnC = d.pop()!; setBoard(prev=>[...prev, turnC]);
+    setStreet('turn'); setDeck(d);
+    resetStreetState(firstToActPost);
+  } else if (street==='turn') {
+    d.pop(); const river = d.pop()!; setBoard(prev=>[...prev, river]);
+    setStreet('river'); setDeck(d);
+    resetStreetState(firstToActPost);
+  } else if (street==='river') {
+    goShowdown();
+  }
+};
+
 
   // ----- Showdown / Award -----
   const goShowdown = () => {
@@ -284,77 +339,137 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
     setStreet('showdown'); setRevealed(true);
   };
 
-  const doCheckOrCall = (who: Actor) => {
-    if (!handActive.current) return;
-    if (toCall>0) {
-      // Call
-      if (who==='player') {
-        if (playerStack<toCall) return; // no all-in in this simplified version
-        setPlayerStack(s=>s-toCall);
-      } else {
-        if (cpuStack<toCall) return;
-        setCpuStack(s=>s-toCall);
-      }
-      setPot(p=>p+toCall);
-      setToCall(0);
-      // 콜로 스트리트 종료(한 번 베팅만 가능)
+const doCheckOrCall = (who: Actor) => {
+  if (!handActive.current || street==='showdown') return;
+
+  const opp = other(who);
+  const need = needToCall(who, streetBet, contrib);
+
+  if (need > 0) {
+    // --- CALL ---
+    // 스택/팟 반영
+    if ((who==='player' && playerStack<need) || (who==='cpu' && cpuStack<need)) return; // (심플: 올인 미지원)
+    if (who==='player') setPlayerStack(s=>s-need); else setCpuStack(s=>s-need);
+    setPot(p=>p+need);
+    setContrib(prev => ({...prev, [who]: prev[who] + need}));
+
+    // 콜은 '마지막 공격자에 대한 응답' → actedSinceLastBet[who]=true
+    actedSinceLastBet.current[who] = true;
+    actedThisStreet.current[who] = true;
+
+    // 둘 다 마지막 베팅 이후에 액션 완료면 스트리트 종료
+    const bothDone = actedSinceLastBet.current.player && actedSinceLastBet.current.cpu;
+    if (bothDone) {
       dealNextStreet();
-    } else {
-      // Check
-      actedThisStreet.current[who] = true;
-      if (actedThisStreet.current.player && actedThisStreet.current.cpu) {
-        // 모두 체크 → 다음 스트리트
-        dealNextStreet();
-      } else {
-        // 턴 넘기기
-        setTurn(who==='player'?'cpu':'player');
-      }
+      
+      return;
     }
-  };
 
-  const doBetOrRaise = (who: Actor) => {
-    if (!handActive.current) return;
-    if (betOpen) return; // 이미 한 번 베팅됨 → 레이즈 불가(간단화)
-    // 효과적으로 "베팅/첫 레이즈"를 FIXED_BET 금액으로 연다.
-    if (who==='player') {
-      const need = FIXED_BET; if (playerStack<need) return;
-      setPlayerStack(s=>s-need); setPot(p=>p+need);
+    // 아직 상대가 행동해야 함
+    setTurn(opp);
+    setToCall( needToCall(opp, streetBet, {...contrib, [who]: contrib[who]+need}) );
+    return;
+  }
+
+  // --- CHECK ---
+  actedThisStreet.current[who] = true;
+  actedSinceLastBet.current[who] = true;
+
+  // 베팅이 열리지 않았고 두 명 모두 체크 → 스트리트 종료
+  if (!opened && actedThisStreet.current.player && actedThisStreet.current.cpu) {
+    dealNextStreet();
+    
+    return;
+  }
+
+  // 상대에게 턴
+  setTurn(opp);
+  setToCall( needToCall(opp, streetBet, contrib) );
+};
+
+const doBetOrRaise = (who: Actor) => {
+  if (!handActive.current || street==='showdown') return;
+  const opp = other(who);
+
+  if (!opened) {
+    // --- 첫 베팅 열기 ---
+    const need = FIXED_BET;
+    if ((who==='player' && playerStack<need) || (who==='cpu' && cpuStack<need)) return;
+
+    if (who==='player') setPlayerStack(s=>s-need); else setCpuStack(s=>s-need);
+    setPot(p=>p+need);
+    setContrib(prev => ({...prev, [who]: prev[who] + need}));
+
+    setStreetBet(need);
+    setOpened(true);
+    setRaises(1);
+    setLastAggressor(who);
+
+    // 베팅이 열리면, '이 베팅 이후' 액션 플래그 재시작
+    actedSinceLastBet.current = {[who]: true, [opp]: false} as any;
+
+    setTurn(opp);
+    setToCall( needToCall(opp, need, {...contrib, [who]: contrib[who] + need}) );
+    return;
+  }
+
+  // 이미 열렸으면 RAISE
+  if (raises >= 3) {
+    // 레이즈 제한 → 아무 일도 하지 않음 (원하면 토스트)
+    return;
+  }
+
+  const newBet = streetBet + FIXED_BET;
+  const need = newBet - contrib[who]; // 콜+추가분
+  if ((who==='player' && playerStack<need) || (who==='cpu' && cpuStack<need)) return;
+
+  if (who==='player') setPlayerStack(s=>s-need); else setCpuStack(s=>s-need);
+  setPot(p=>p+need);
+  setContrib(prev => ({...prev, [who]: prev[who] + need}));
+
+  setStreetBet(newBet);
+  setRaises(r=>r+1);
+  setLastAggressor(who);
+
+  // 레이즈가 나오면 다시 양쪽이 이 베팅 이후에 액션해야 함
+  actedSinceLastBet.current = {[who]: true, [opp]: false} as any;
+  actedThisStreet.current[who] = true;
+
+  setTurn(opp);
+  setToCall( needToCall(opp, newBet, {...contrib, [who]: contrib[who] + need}) );
+};
+
+
+useEffect(()=>{
+  if (turn!=='cpu' || street==='showdown') return;
+  const t = setTimeout(()=>{
+    const need = needToCall('cpu', streetBet, contrib);
+    const str = approxStrength(cpuHole, board); // 0..1
+
+    if (need>0) {
+      if (str>=0.6) doCheckOrCall('cpu');              // call
+      else if (str>=0.45 && Math.random()<0.4) doCheckOrCall('cpu');
+      else doFold('cpu');
     } else {
-      const need = FIXED_BET; if (cpuStack<need) return;
-      setCpuStack(s=>s-need); setPot(p=>p+need);
+      if (!opened && str>=0.7) doBetOrRaise('cpu');     // open bet
+      else if (opened && raises<3 && str>=0.75 && Math.random()<0.5) doBetOrRaise('cpu'); // occasional raise
+      else doCheckOrCall('cpu');                        // check
     }
-    setBetOpen(true);
-    setToCall(FIXED_BET);
-    setTurn(who==='player'?'cpu':'player');
-  };
+  }, 450);
+  return () => clearTimeout(t);
+}, [turn, street, streetBet, contrib, opened, raises, board, cpuHole]);
 
-  // ----- CPU policy -----
-  useEffect(()=>{
-    if (turn!=='cpu' || street==='showdown') return;
-    const t = setTimeout(()=>{
-      const str = approxStrength(cpuHole, board); // 0..1
-      if (toCall>0) {
-        if (str>=0.6) doCheckOrCall('cpu'); // call
-        else if (str>=0.45 && Math.random()<0.4) doCheckOrCall('cpu');
-        else doFold('cpu');
-      } else {
-        if (!betOpen && str>=0.7) doBetOrRaise('cpu');
-        else if (!betOpen && str>=0.5 && Math.random()<0.3) doBetOrRaise('cpu');
-        else doCheckOrCall('cpu'); // check
-      }
-    }, 450);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turn, street, toCall, betOpen, board, cpuHole]);
 
   // ----- Helpers -----
-  const statusText = useMemo(()=>{
-    if (street==='showdown') return 'Showdown';
-    const who = turn==='player' ? 'You' : 'CPU';
-    if (toCall>0) return `${who} to act — Call ${toCall} or Fold (1 raise max)`;
-    if (!betOpen) return `${who} to act — Check or Bet ${FIXED_BET}`;
-    return `${who} to act — Call ${toCall} or Fold`;
-  }, [turn, toCall, betOpen, street]);
+const statusText = useMemo(()=>{
+  if (street==='showdown') return 'Showdown';
+  const who = turn==='player' ? 'You' : 'CPU';
+  const need = needToCall(turn, streetBet, contrib);
+  if (need>0) return `${who} to act — Call ${need} or Fold${raises>=3?' (raise cap reached)':''}`;
+  if (!opened) return `${who} to act — Check or Bet ${FIXED_BET}`;
+  return `${who} to act — Check or Call ${needToCall(turn, streetBet, contrib)}${raises<3?` or Raise +${FIXED_BET}`:' (no more raises)'}`;
+}, [turn, street, streetBet, contrib, opened, raises]);
+
 
   const nextHand = () => startNewHand(!dealerIsPlayer);
 
@@ -371,9 +486,15 @@ export default function TexasHoldem({ onGameOver }: { onGameOver: (n:number)=>vo
         <Pressable disabled={!isMe} onPress={()=>doCheckOrCall('player')} style={[styles.btn, !isMe&&styles.btnDisabled]}>
           <Text style={styles.btnTxt}>{toCall>0?`콜 ${toCall}`:'체크'}</Text>
         </Pressable>
-        <Pressable disabled={!isMe || betOpen} onPress={()=>doBetOrRaise('player')} style={[styles.btn, (!isMe||betOpen)&&styles.btnDisabled]}>
-          <Text style={styles.btnTxt}>{toCall>0?'레이지 불가':'베팅 '+FIXED_BET}</Text>
-        </Pressable>
+<Pressable
+  disabled={!(turn==='player' && street!=='showdown') || raises>=3}
+  onPress={()=>doBetOrRaise('player')}
+  style={[styles.btn, ((turn!=='player'||street==='showdown'||raises>=3) && styles.btnDisabled)]}
+>
+  <Text style={styles.btnTxt}>
+    {opened ? (raises>=3 ? '레이즈 제한' : `레이지 +${FIXED_BET}`) : `베팅 ${FIXED_BET}`}
+  </Text>
+</Pressable>
       </View>
     );
   };
